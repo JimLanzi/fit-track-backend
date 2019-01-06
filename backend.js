@@ -8,7 +8,29 @@ var config = require('./config.js');
 var pwlib = require('./password.js');
 
 // Establish Database connection
-var connection = mysql.createConnection(config.dbconfig);
+//var connection = mysql.createConnection(config.dbconfig);
+var connection;
+function handleDisconnect() {
+    connection = mysql.createConnection(config.dbconfig);
+
+    connection.connect(function(err) {
+        if (err) {
+            console.log('error when connecting to db: ', err);
+            setTimeout(handleDisconnect, 2000);
+        }
+    });
+
+    connection.on('error', function(err) {
+        console.log('db error', err);
+        if (err.code === 'PROTOCOL_CONNECTION_LOST') {
+            handleDisconnect();
+        }
+        else {
+            throw err;
+        }
+    });
+}
+handleDisconnect();
 
 connection.connect( (err) => {
     if(!err)
@@ -181,6 +203,103 @@ app.use((err, req, res, next) => {
     {
         next(err);
     }
+});
+
+
+// Post Weight/Date update to the DB
+app.post("/api/postWeight", (req,res) => {
+    console.log('Posting a new weight');
+    var decoded = jwt.decode(req.body.token);
+    var user_name = decoded.user_name;
+    console.log('Searching db for ',user_name);
+    connection.query('SELECT * FROM users WHERE user_name = ?', [user_name],
+    (error, results, fields) => {
+        if (error)
+        {
+            console.log('error occured',error);
+            res.status(401).json({success: false, err: 'DB Query error while looking for user', token: null});
+        }
+        else
+        {
+            if(results.length > 0)
+            {
+                console.log('Found user ',user_name);
+                var result = {'id': results[0].id, 
+                              'date': req.body.date,
+                              'weight': parseFloat(req.body.weight)};
+                console.log('Wish to insert: ',result);              
+                connection.query(
+                   "INSERT INTO WeightData SET ?", result,
+                   (error, rows, fields) => {
+                       if(error)
+                       {
+                           console.log("Insertion error",error);
+                       }
+                       else
+                       {
+                           console.log("Insertion success");
+                           res.json({success: true, error:null});
+                       }
+                });
+
+            }
+            else
+            {
+                console.log('Weight Post Fail! Username not registered');
+                res.status(401).json({success: false, err: 'Username not registered', token: null});
+            }
+        }
+    });
+
+});
+
+// Get Weight History
+app.get("/api/getWeightData/:token", (req,res) => {
+    console.log('Fetching Weight Data');
+    var decoded = jwt.decode(req.params.token);
+    var user_name = decoded.user_name;
+    console.log('Searching db for ',user_name);
+    connection.query('SELECT * FROM users WHERE user_name = ?', [user_name],
+    (error, results, fields) => {
+        if (error)
+        {
+            console.log('error occured',error);
+            res.status(401).json({success: false, err: 'DB Query error while looking for user', token: null});
+        }
+        else
+        {
+            if(results.length > 0)
+            {
+                console.log('Found user ',user_name);
+                var id = results[0].id;
+
+                connection.query(
+                   "SELECT date,weight FROM WeightData where id = ?", [id],
+                   (error, rows, fields) => {
+                       if(error)
+                       {
+                           console.log("Error when selecting date,weight",error);
+                       }
+                       else
+                       {
+                           console.log("Success selecting date,weight");
+                           var sendStuff = {'rows':rows};
+                           console.log(sendStuff);
+                           res.send(sendStuff);
+                       }
+                });
+
+            }
+            else
+            {
+                console.log('Weight Post Fail! Username not registered');
+                res.status(401).json({success: false, err: 'Username not registered', token: null});
+            }
+        }
+    });
+
+
+
 });
 
 
